@@ -127,4 +127,4 @@ Developed by [czz](https://github.com/czz) as part of the *Oblivion* project.
 
 ## License
 
-MIT License
+GPL 3 license.
