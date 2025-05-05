@@ -7,12 +7,11 @@ import (
     "strconv"
     "strings"
     "net/url"
+    "net"
 
     "github.com/czz/oblivion/utils/option"
     "github.com/czz/oblivion/utils/help"
-)
-
-import (
+    "github.com/go-rod/rod/lib/proto"
     "github.com/go-rod/rod"
     "github.com/go-rod/rod/lib/launcher"
 )
@@ -131,8 +130,20 @@ func (w *WebSpider) recursiveCrawl(url string, includeHTML bool, currentDepth in
     }
 }
 
+func isResolvable(rawURL string) bool {
+    parsedURL, err := url.Parse(rawURL)
+    if err != nil || parsedURL.Hostname() == "" {
+        return false
+    }
+    _, err = net.LookupHost(parsedURL.Hostname())
+    return err == nil
+}
+
 func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string) CrawlResult {
-    // Launch browser with custom User-Agent
+    if !isResolvable(urlStr) {
+        return CrawlResult{URL: urlStr, Title: "Unresolvable host", Links: []string{}}
+    }
+
     u := launcher.New().
         Headless(true).
         Set("user-agent", userAgent).
@@ -141,24 +152,23 @@ func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string) Cra
     browser := rod.New().ControlURL(u).MustConnect()
     defer browser.MustClose()
 
-    page := browser.MustPage(urlStr)
-    err := page.Navigate(urlStr)
+    page, err := browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
     if err != nil {
-        return CrawlResult{URL: urlStr, Title: "Error: " + err.Error(), Links: []string{}}
+        return CrawlResult{URL: urlStr, Title: "Failed to create page: " + err.Error(), Links: []string{}}
+    }
+
+    if err := page.Navigate(urlStr); err != nil {
+        return CrawlResult{URL: urlStr, Title: "Navigation failed: " + err.Error(), Links: []string{}}
     }
 
     page.MustWaitLoad()
-
-    // ✅ Get title
     title := page.MustEval(`() => document.title`).String()
 
-    // ✅ Parse base URL to resolve relative hrefs
     baseURL, err := url.Parse(page.MustInfo().URL)
     if err != nil {
         return CrawlResult{URL: urlStr, Title: "Invalid base URL", Links: []string{}}
     }
 
-    // ✅ Extract and normalize all hrefs
     elements := page.MustElements("a")
     var links []string
     for _, el := range elements {
@@ -182,10 +192,12 @@ func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string) Cra
             continue
         }
 
-        links = append(links, resolvedURL.String())
+        // Filter by DNS resolution
+        if isResolvable(resolvedURL.String()) {
+            links = append(links, resolvedURL.String())
+        }
     }
 
-    // ✅ Get full HTML if requested
     var html string
     if includeHTML {
         htmlEl := page.MustElement("html")
@@ -199,6 +211,7 @@ func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string) Cra
         FullHTML: html,
     }
 }
+
 
 func (w *WebSpider) Save(filename string) error {
     file, err := os.Create(filename)
