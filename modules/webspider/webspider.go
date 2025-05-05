@@ -146,6 +146,7 @@ func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string) Cra
 
     u := launcher.New().
         Headless(true).
+        Leakless(false).
         Set("user-agent", userAgent).
         MustLaunch()
 
