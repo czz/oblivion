@@ -53,9 +53,9 @@ $ go run main.go
 ### Example
 
 ```bash
-oblv> use spider
+oblv> use webspider
 spider> options
-spider> set url https://example.com
+spider> set DOMAIN https://example.com
 spider> run
 spider> save results.txt
 ```
