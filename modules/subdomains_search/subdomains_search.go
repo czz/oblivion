@@ -28,6 +28,7 @@ var defaultSources = []string{
 	"https://urlscan.io/api/v1/search/?q=domain:%s",
 	"https://otx.alienvault.com/api/v1/indicators/domain/%s/passive_dns",
 	"https://jldc.me/anubis/subdomains/%s",
+	"https://api.hackertarget.com/hostsearch/?q=%s",
 }
 
 // SubdomainsSearch holds state and configuration for a subdomain scan
