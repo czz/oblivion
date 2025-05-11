@@ -42,20 +42,29 @@ func NewPortScanner() *PortScanner {
 
     om.Register(option.NewOption("TARGETS", []string{}, true, "Targets"))
     om.Register(option.NewOption("PORTS", []int{}, true, "Ports to scan"))
-    om.Register(option.NewOption("TIMEOUT", 3, false, "Timeout in seconds"))
-    om.Register(option.NewOption("THREADS", 10, false, "Number of threads"))
+    om.Register(option.NewOption("TIMEOUT", 1, false, "Timeout in seconds"))
+    om.Register(option.NewOption("THREADS", 200, false, "Number of threads"))
     om.Register(option.NewOption("ENABLE_ICMP", false, false, "Enable ICMP"))
     om.Register(option.NewOption("ENABLE_UDP", false, false, "Enable UDP scan"))
     om.Register(option.NewOption("RATE_LIMIT", 100, false, "Rate Limit"))
 
-    client := &http.Client{Timeout: time.Second * 3}
+    var netTransport = &http.Transport{
+        Dial: (&net.Dialer{
+        Timeout: 5 * time.Second,
+      }).Dial,
+      TLSHandshakeTimeout: 3 * time.Second,
+    }
+    var client = &http.Client{
+      Timeout: time.Second * 3,
+      Transport: netTransport,
+    }
 
     helpManager := help.NewHelpManager()
     helpManager.Register("portscanner", "Portscanner module",[][]string{
   		{"TARGETS", "example.com or abc.com,def.com or /pathtofile.txt", "Targets to scan"},
   		{"PORTS", "80 or 22,80 or 1-10000", "Ports to scan"},
-  		{"TIMEOUT", "3", "Timeout in seconds"},
-      {"THREADS", "10", "Number of threads"},
+  		{"TIMEOUT", "1", "Timeout in seconds"},
+      {"THREADS", "200", "Number of threads"},
       {"ENABLE_ICMP", "true or false", "Enable ICMP"},
       {"ENABLE_UDP", "true or false", "Enable UDP scan"},
       {"RATE_LIMIT", "100", "Rate Limit"},
@@ -127,27 +136,23 @@ func (p *PortScanner) Run() [][]string {
 
 func (p *PortScanner) scanTarget(ip string) JsonScanResult {
     var enICMP, enUDP bool
-    var timeout int
+    var timeout, threadCount int
     var ports []int
 
-    //var enICMP bool
-    enICMP_opt, _ := p.optionManager.Get("ENABLE_ICMP")
-    if val, ok := enICMP_opt.Value.(bool); ok {
-      enICMP = val
+    if val, ok := p.optionManager.Get("ENABLE_ICMP"); ok {
+        enICMP, _ = val.Value.(bool)
     }
-    enUDP_opt, _ := p.optionManager.Get("ENABLE_UDP")
-    if val, ok := enUDP_opt.Value.(bool); ok {
-      enUDP = val
+    if val, ok := p.optionManager.Get("ENABLE_UDP"); ok {
+        enUDP, _ = val.Value.(bool)
     }
-
-    timeout_opt, _ := p.optionManager.Get("TIMEOUT")
-    if val, ok := timeout_opt.Value.(int); ok {
-      timeout = val
+    if val, ok := p.optionManager.Get("TIMEOUT"); ok {
+        timeout, _ = val.Value.(int)
     }
-
-    ports_opt, _ := p.optionManager.Get("PORTS")
-    if val, ok := ports_opt.Value.([]int); ok {
-      ports = val
+    if val, ok := p.optionManager.Get("THREADS"); ok {
+        threadCount, _ = val.Value.(int)
+    }
+    if val, ok := p.optionManager.Get("PORTS"); ok {
+        ports, _ = val.Value.([]int)
     }
 
     result := JsonScanResult{
@@ -157,60 +162,102 @@ func (p *PortScanner) scanTarget(ip string) JsonScanResult {
     }
 
     if enICMP {
-        pinger, err := ping.NewPinger(ip)
-        if err == nil {
-            pinger.Count = 1
-            pinger.Timeout = time.Duration(timeout) * time.Second
-            if err := pinger.Run(); err == nil {
-                stats := pinger.Statistics()
-                result.PingRTT = stats.AvgRtt
+        go func() {
+            pinger, err := ping.NewPinger(ip)
+            if err == nil {
+                pinger.Count = 1
+                pinger.Timeout = time.Duration(timeout) * time.Second
+                if err := pinger.Run(); err == nil {
+                    stats := pinger.Statistics()
+                    result.PingRTT = stats.AvgRtt
+                }
             }
-        }
+        }()
     }
+
+    type scanResult struct {
+        port   int
+        banner string
+        proto  string
+    }
+
+    tasks := make(chan int, len(ports))
+    output := make(chan scanResult, len(ports)*2)
 
     for _, port := range ports {
-        address := net.JoinHostPort(ip, strconv.Itoa(port))
-
-        // TCP Scan
-        conn, err := net.DialTimeout("tcp", address, time.Duration(timeout)*time.Second)
-        if err == nil {
-            banner := getBanner(conn)
-            conn.Close()
-            if banner == "" {
-                banner = httpGrabBanner(p.Client, ip, port)
-            }
-            result.Open[port] = banner
-            result.Protocol[port] = "tcp"
-        }
-
-        // UDP Scan
-        if enUDP {
-            udpAddr, err := net.ResolveUDPAddr("udp", address)
-            if err != nil {
-                continue
-            }
-            conn, err := net.DialUDP("udp", nil, udpAddr)
-            if err != nil {
-                continue
-            }
-            conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
-            _, err = conn.Write([]byte{0x0})
-            if err != nil {
-                conn.Close()
-                continue
-            }
-            buf := make([]byte, 1024)
-            _, _, err = conn.ReadFromUDP(buf)
-            conn.Close()
-
-            if err != nil {
-                result.Open[port] = "[no response]"
-            } else {
-                result.Open[port] = "[responded]"
-            }
-            result.Protocol[port] = "udp"
-        }
+        tasks <- port
     }
+    close(tasks)
+
+    var wg sync.WaitGroup
+
+    rateLimit := 0
+    if val, ok := p.optionManager.Get("RATE_LIMIT"); ok {
+        rateLimit, _ = val.Value.(int)
+    }
+    var delay time.Duration
+    if rateLimit > 0 {
+        delay = time.Second / time.Duration(rateLimit)
+    }
+
+    for i := 0; i < threadCount; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            for port := range tasks {
+                if delay > 0 {
+                    time.Sleep(delay)
+                }
+
+                address := net.JoinHostPort(ip, strconv.Itoa(port))
+
+                conn, err := net.DialTimeout("tcp", address, time.Duration(timeout)*time.Second)
+                if err == nil {
+                    banner := getBanner(conn)
+                    conn.Close()
+                    if banner == "" {
+                        banner = httpGrabBanner(p.Client, ip, port)
+                    }
+                    output <- scanResult{port, banner, "tcp"}
+                }
+
+                if enUDP {
+                    udpAddr, err := net.ResolveUDPAddr("udp", address)
+                    if err != nil {
+                        continue
+                    }
+                    conn, err := net.DialUDP("udp", nil, udpAddr)
+                    if err != nil {
+                        continue
+                    }
+                    conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
+                    _, err = conn.Write([]byte{0x0})
+                    if err != nil {
+                        conn.Close()
+                        continue
+                    }
+                    buf := make([]byte, 1024)
+                    _, _, err = conn.ReadFromUDP(buf)
+                    conn.Close()
+
+                    if err != nil {
+                        output <- scanResult{port, "[no response]", "udp"}
+                    } else {
+                        output <- scanResult{port, "[responded]", "udp"}
+                    }
+                }
+            }
+        }()
+    }
+
+    wg.Wait()
+    close(output)
+
+    for res := range output {
+        result.Open[res.port] = res.banner
+        result.Protocol[res.port] = res.proto
+    }
+
     return result
 }
 
