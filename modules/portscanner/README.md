@@ -1,4 +1,4 @@
-## PortScanner
+# PortScanner
 
 A versatile Oblivion Go module for scanning TCP and optional UDP ports across multiple targets, with ICMP ping support and configurable rate limiting.
 
