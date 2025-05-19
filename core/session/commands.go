@@ -6,7 +6,7 @@ import (
     "strings"
 
     "github.com/czz/oblivion/core/tui"
-		"github.com/czz/oblivion/modules"
+    "github.com/czz/oblivion/modules"
 )
 
 // registerCommands initializes the command map with available command handlers.
@@ -165,6 +165,13 @@ func (s *Session) handleRun(args []string) {
         return
     }
 
+    module := *s.activeModule
+
+    if module.Running() {
+        fmt.Println(s.Tui.Yellow(fmt.Sprintf("Module %s is running in the background. Try later.", module.Prompt())))
+        return
+    }
+
     // Flag to determine if the module should run in the background
     runInBackground := false
     // Check if the "--background" argument is provided
@@ -172,8 +179,6 @@ func (s *Session) handleRun(args []string) {
         runInBackground = true
         args = args[1:] // Remove the "&" argument from the list
     }
-
-    module := *s.activeModule
 
     // If running in background, launch the module in a goroutine
     if runInBackground {
