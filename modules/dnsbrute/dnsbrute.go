@@ -212,8 +212,11 @@ func (b *DNSBrute) Results() [][]string {
 
 // Set allows dynamic setting of options
 func (b *DNSBrute) Set(name, value string) []string {
-	opt, _ := b.optionManager.Get(name)
-	if opt != nil {
+	//opt, _ := b.optionManager.Get(name)
+	om := *b.optionManager
+	opt, ok := om.Get(name)
+
+	if ok {
 		opt.Set(value)
 		return []string{opt.Name, fmt.Sprintf("%v", opt.Value)}
 	}
