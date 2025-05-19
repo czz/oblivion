@@ -44,14 +44,16 @@ func NewWebSpider() *WebSpider {
     om.Register(option.NewOption("SAVE_HTML", false, false, "Save full HTML content"))
     om.Register(option.NewOption("USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36", false, "User-Agent string to use"))
     om.Register(option.NewOption("ALLOWED_DOMAINS", []string{}, false, "List of allowed domains for recursion"))
+    om.Register(option.NewOption("INCLUDE_CATEGORIES", true, false, "Categorize extracted links (scripts, images, media, etc.)"))
 
     helpManager := help.NewHelpManager()
-    helpManager.Register("webspider", "Webspider module",[][]string{
-      {"TARGETS", "example.com or abc.com,def.com or /pathtofile.txt", "Target URLs to crawl"},
-      {"DEPTH", "1", "Crawl depth"},
-      {"SAVE_HTML", "true or false", "Timeout in seconds"},
-      {"USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36", "User agent string"},
-      {"ALLOWED_DOMAINS", "example.com or abc.com,def.com or /pathtofile.txt", "List of allowed domains"},
+    helpManager.Register("webspider", "Webspider module", [][]string{
+        {"TARGETS", "example.com or abc.com,def.com or /pathtofile.txt", "Target URLs to crawl"},
+        {"DEPTH", "1", "Crawl depth"},
+        {"SAVE_HTML", "true or false", "Timeout in seconds"},
+        {"USER_AGENT", "Mozilla/5.0 ...", "User agent string"},
+        {"ALLOWED_DOMAINS", "example.com or abc.com,def.com or /pathtofile.txt", "List of allowed domains"},
+        {"INCLUDE_CATEGORIES", "true or false", "Classify links into images, scripts, media, etc."},
     })
 
     return &WebSpider{
@@ -71,48 +73,55 @@ func (w *WebSpider) Run() [][]string {
     var depth int
     var userAgent string
     var allowedDomains []string
+    var includeCategories bool = true
 
-    targets_opt, _ := w.optionManager.Get("TARGETS")
-    if val, ok := targets_opt.Value.([]string); ok {
-      targets = val
+    if val, ok := w.optionManager.Get("TARGETS"); ok {
+        if v, ok := val.Value.([]string); ok {
+            targets = v
+        }
     }
-
-    depth_opt, _ := w.optionManager.Get("DEPTH")
-    if val, ok := depth_opt.Value.(int); ok {
-      depth = val
+    if val, ok := w.optionManager.Get("DEPTH"); ok {
+        if v, ok := val.Value.(int); ok {
+            depth = v
+        }
     }
-
-    saveFullHTML_opt, _ := w.optionManager.Get("SAVE_HTML")
-    if val, ok := saveFullHTML_opt.Value.(bool); ok {
-      saveFullHTML = val
+    if val, ok := w.optionManager.Get("SAVE_HTML"); ok {
+        if v, ok := val.Value.(bool); ok {
+            saveFullHTML = v
+        }
     }
-
-    userAgent_opt, _ := w.optionManager.Get("USER_AGENT")
-    if val, ok := userAgent_opt.Value.(string); ok {
-      userAgent = val
+    if val, ok := w.optionManager.Get("USER_AGENT"); ok {
+        if v, ok := val.Value.(string); ok {
+            userAgent = v
+        }
     }
-
-    allowedDomains_opt, _ := w.optionManager.Get("ALLOWED_DOMAINS")
-    if val, ok := allowedDomains_opt.Value.([]string); ok {
-      allowedDomains = val
+    if val, ok := w.optionManager.Get("ALLOWED_DOMAINS"); ok {
+        if v, ok := val.Value.([]string); ok {
+            allowedDomains = v
+        }
+    }
+    if val, ok := w.optionManager.Get("INCLUDE_CATEGORIES"); ok {
+        if v, ok := val.Value.(bool); ok {
+            includeCategories = v
+        }
     }
 
     var rows [][]string
     for _, url := range targets {
-        w.recursiveCrawl(url, saveFullHTML, 0, depth, userAgent, allowedDomains, &rows)
+        w.recursiveCrawl(url, saveFullHTML, 0, depth, userAgent, allowedDomains, includeCategories, &rows)
     }
     w.visited = make(map[string]bool)
     w.table = rows
     return rows
 }
 
-func (w *WebSpider) recursiveCrawl(url string, includeHTML bool, currentDepth int, maxDepth int, userAgent string, allowedDomains []string, rows *[][]string) {
+func (w *WebSpider) recursiveCrawl(url string, includeHTML bool, currentDepth int, maxDepth int, userAgent string, allowedDomains []string, includeCategories bool, rows *[][]string) {
     if currentDepth >= maxDepth || w.visited[url] {
         return
     }
     w.visited[url] = true
 
-    result := w.crawl(url, includeHTML, userAgent)
+    result := w.crawl(url, includeHTML, userAgent, includeCategories)
     w.results = append(w.results, result)
 
     *rows = append(*rows, []string{"URL", "TITLE", "TOTAL LINKS"})
@@ -125,31 +134,17 @@ func (w *WebSpider) recursiveCrawl(url string, includeHTML bool, currentDepth in
 
     for _, link := range result.Links {
         if isAllowed(link, allowedDomains) {
-            w.recursiveCrawl(link, includeHTML, currentDepth+1, maxDepth, userAgent, allowedDomains, rows)
+            w.recursiveCrawl(link, includeHTML, currentDepth+1, maxDepth, userAgent, allowedDomains, includeCategories, rows)
         }
     }
 }
 
-func isResolvable(rawURL string) bool {
-    parsedURL, err := url.Parse(rawURL)
-    if err != nil || parsedURL.Hostname() == "" {
-        return false
-    }
-    _, err = net.LookupHost(parsedURL.Hostname())
-    return err == nil
-}
-
-func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string) CrawlResult {
+func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string, includeCategories bool) CrawlResult {
     if !isResolvable(urlStr) {
         return CrawlResult{URL: urlStr, Title: "Unresolvable host", Links: []string{}}
     }
 
-    u := launcher.New().
-        Headless(true).
-        Leakless(false).
-        Set("user-agent", userAgent).
-        MustLaunch()
-
+    u := launcher.New().Headless(true).Leakless(false).Set("user-agent", userAgent).MustLaunch()
     browser := rod.New().ControlURL(u).MustConnect()
     defer browser.MustClose()
 
@@ -164,38 +159,42 @@ func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string) Cra
 
     page.MustWaitLoad()
     title := page.MustEval(`() => document.title`).String()
+    baseURL, _ := url.Parse(page.MustInfo().URL)
 
-    baseURL, err := url.Parse(page.MustInfo().URL)
-    if err != nil {
-        return CrawlResult{URL: urlStr, Title: "Invalid base URL", Links: []string{}}
+    var links []string
+
+    selectors := map[string]string{
+        "a[href]":                 "href",
+        "script[src]":            "src",
+        "img[src]":               "src",
+        "link[rel=stylesheet]":   "href",
+        "video[src]":             "src",
+        "audio[src]":             "src",
+        "source[src]":            "src",
     }
 
-    elements := page.MustElements("a")
-    var links []string
-    for _, el := range elements {
-        href, err := el.Attribute("href")
-        if err != nil || href == nil {
-            continue
-        }
-
-        hrefStr := strings.TrimSpace(*href)
-        if hrefStr == "" || strings.HasPrefix(hrefStr, "#") || strings.HasPrefix(hrefStr, "javascript:") {
-            continue
-        }
-
-        parsedHref, err := url.Parse(hrefStr)
-        if err != nil {
-            continue
-        }
-
-        resolvedURL := baseURL.ResolveReference(parsedHref)
-        if resolvedURL.Scheme != "http" && resolvedURL.Scheme != "https" {
-            continue
-        }
-
-        // Filter by DNS resolution
-        if isResolvable(resolvedURL.String()) {
-            links = append(links, resolvedURL.String())
+    for sel, attr := range selectors {
+        elements := page.MustElements(sel)
+        for _, el := range elements {
+            val, err := el.Attribute(attr)
+            if err != nil || val == nil {
+                continue
+            }
+            href := strings.TrimSpace(*val)
+            if href == "" || strings.HasPrefix(href, "javascript:") {
+                continue
+            }
+            parsed, err := url.Parse(href)
+            if err != nil {
+                continue
+            }
+            resolved := baseURL.ResolveReference(parsed)
+            if resolved.Scheme != "http" && resolved.Scheme != "https" {
+                continue
+            }
+            if isResolvable(resolved.String()) {
+                links = append(links, resolved.String())
+            }
         }
     }
 
@@ -213,7 +212,6 @@ func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string) Cra
     }
 }
 
-
 func (w *WebSpider) Save(filename string) error {
     file, err := os.Create(filename)
     if err != nil {
@@ -227,88 +225,85 @@ func (w *WebSpider) Save(filename string) error {
 }
 
 func (w *WebSpider) Options() []map[string]string {
-  opt := make([]map[string]string, len(w.optionManager.List()))
-  for i, v := range w.optionManager.List() {
-    opt[i] = v.Format()
-  }
-  return opt
+    opt := make([]map[string]string, len(w.optionManager.List()))
+    for i, v := range w.optionManager.List() {
+        opt[i] = v.Format()
+    }
+    return opt
 }
 
 func (w *WebSpider) Set(n string, v string) []string {
-          opt, ok := w.optionManager.Get(n)
-          if ok {
-            switch opt.Name {
-            case "TARGETS":
-                var targets []string
-                v = strings.TrimSpace(v)
-                if fileInfo, err := os.Stat(v); err == nil && !fileInfo.IsDir() {
-                    content, err := os.ReadFile(v)
-                    if err != nil {
-                        return []string{"TARGETS", "Error reading file"}
-                    }
-                    lines := strings.Split(string(content), "\n")
-                    for _, line := range lines {
-                        line = strings.TrimSpace(line)
-                        if line != "" {
-                           if !checkURL(line) {
-                              return []string{"TARGETS", "Error: url must start with http:// or https:// check your file"}
-                           }
-                            targets = append(targets, line)
+    opt, ok := w.optionManager.Get(n)
+    if ok {
+        switch opt.Name {
+        case "TARGETS":
+            var targets []string
+            v = strings.TrimSpace(v)
+            if fileInfo, err := os.Stat(v); err == nil && !fileInfo.IsDir() {
+                content, err := os.ReadFile(v)
+                if err != nil {
+                    return []string{"TARGETS", "Error reading file"}
+                }
+                lines := strings.Split(string(content), "\n")
+                for _, line := range lines {
+                    line = strings.TrimSpace(line)
+                    if line != "" {
+                        if !checkURL(line) {
+                            return []string{"TARGETS", "Error: url must start with http:// or https://"}
                         }
+                        targets = append(targets, line)
                     }
-                } else {
-                    for _, t := range strings.Split(v, ",") {
-                        t = strings.TrimSpace(t)
-                        if t != "" {
-                            if !checkURL(t) {
-                               return []string{"TARGETS", "Error: url must start with http:// or https:// check your file"}
-                            }
-
-                            targets = append(targets, t)
+                }
+            } else {
+                for _, t := range strings.Split(v, ",") {
+                    t = strings.TrimSpace(t)
+                    if t != "" {
+                        if !checkURL(t) {
+                            return []string{"TARGETS", "Error: url must start with http:// or https://"}
                         }
+                        targets = append(targets, t)
                     }
                 }
-                opt.Set(targets)
-                return []string{n, fmt.Sprint(targets)}
-            case "DEPTH":
-                if depth, err := strconv.Atoi(v); err == nil {
-                    opt.Set(depth)
-                    return []string{n, v}
-                } else {
-                    return []string{n, "Invalid depth"}
-                }
-            case "SAVE_HTML":
-                opt.Set((v == "true"))
-                return []string{n, v}
-            case "USER_AGENT":
-                opt.Set(v)
-                return []string{n, v}
-            case "ALLOWED_DOMAINS":
-                var domains []string
-                for _, d := range strings.Split(v, ",") {
-                    d = strings.TrimSpace(d)
-                    if d != "" {
-                        domains = append(domains, d)
-                    }
-                }
-                opt.Set(domains)
-                return []string{n, fmt.Sprint(domains)}
-            default:
-                opt.Set(v)
+            }
+            opt.Set(targets)
+            return []string{n, fmt.Sprint(targets)}
+        case "DEPTH":
+            if depth, err := strconv.Atoi(v); err == nil {
+                opt.Set(depth)
                 return []string{n, v}
             }
+            return []string{n, "Invalid depth"}
+        case "SAVE_HTML":
+            opt.Set((v == "true"))
+            return []string{n, v}
+        case "USER_AGENT":
+            opt.Set(v)
+            return []string{n, v}
+        case "ALLOWED_DOMAINS":
+            var domains []string
+            for _, d := range strings.Split(v, ",") {
+                d = strings.TrimSpace(d)
+                if d != "" {
+                    domains = append(domains, d)
+                }
+            }
+            opt.Set(domains)
+            return []string{n, fmt.Sprint(domains)}
+        case "INCLUDE_CATEGORIES":
+            opt.Set((v == "true"))
+            return []string{n, v}
         }
+    }
     return []string{"Error", "Option not found"}
 }
 
 func (w *WebSpider) Help() [][]string {
-  help, _ := w.help.Get(w.prompt)
-  return help
-
+    help, _ := w.help.Get(w.prompt)
+    return help
 }
 
 func (w *WebSpider) Results() [][]string {
-  return w.table
+    return w.table
 }
 
 func (w *WebSpider) Name() string       { return w.name }
@@ -316,7 +311,7 @@ func (w *WebSpider) Author() string     { return w.author }
 func (w *WebSpider) Description() string { return w.desc }
 func (w *WebSpider) Prompt() string     { return w.prompt }
 func (w *WebSpider) Running() bool      { return w.running }
-func (w *WebSpider) Start() error       { w.running = true; return nil}
+func (w *WebSpider) Start() error       { w.running = true; return nil }
 func (w *WebSpider) Stop() error        { w.running = false; return nil }
 
 func isAllowed(link string, domains []string) bool {
@@ -332,8 +327,14 @@ func isAllowed(link string, domains []string) bool {
 }
 
 func checkURL(url string) bool {
-    if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+    return strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://")
+}
+
+func isResolvable(rawURL string) bool {
+    parsedURL, err := url.Parse(rawURL)
+    if err != nil || parsedURL.Hostname() == "" {
         return false
     }
-    return true
+    _, err = net.LookupHost(parsedURL.Hostname())
+    return err == nil
 }
