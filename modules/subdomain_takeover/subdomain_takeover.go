@@ -58,7 +58,7 @@ func NewSubdomainTakeover() *SubdomainTakeover {
     return &SubdomainTakeover{
         optionManager: om,
         name:          "Subdomain Takeover",
-        author:        "Your Name",
+        author:        "Luca Cuzzolin",
         desc:          "Detects subdomain takeover via CNAME and HTTP response analysis",
         prompt:        "subdomain_takeover",
         help:          hm,

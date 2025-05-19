@@ -3,9 +3,9 @@ package modules
 import (
     "fmt"
 
-    "github.com/czz/oblivion/modules/subdomains_search"
     "github.com/czz/oblivion/modules/dnsbrute"
     "github.com/czz/oblivion/modules/portscanner"
+    "github.com/czz/oblivion/modules/subdomains_search"
     "github.com/czz/oblivion/modules/subdomain_takeover"
     "github.com/czz/oblivion/modules/webspider"
 )
