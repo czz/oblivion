@@ -4,9 +4,9 @@ import (
     "fmt"
 
     "github.com/czz/oblivion/modules/subdomains_search"
-//    "github.com/czz/oblivion/modules/s3enum"
     "github.com/czz/oblivion/modules/dnsbrute"
     "github.com/czz/oblivion/modules/portscanner"
+    "github.com/czz/oblivion/modules/subdomain_takeover"
     "github.com/czz/oblivion/modules/webspider"
 )
 
@@ -34,7 +34,7 @@ func LoadModules() *ModuleManager {
     manager.Register(dnsbrute.NewDNSBrute())
     manager.Register(portscanner.NewPortScanner())
     manager.Register(subdomains_search.NewSubdomainsSearch())
-//    manager.Register(s3enum.NewS3enum())
+    manager.Register(subdomain_takeover.NewSubdomainTakeover())
     manager.Register(webspider.NewWebSpider())
 
     // Log the number of modules loaded

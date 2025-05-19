@@ -32,7 +32,3 @@ func (m *ModuleManager) List() []string {
     return keys
 }
 
-/*func (m *ModuleManager) Prompt(module Module) string {
-    return module.Prompt()
-}
-*/
