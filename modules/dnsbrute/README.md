@@ -1,4 +1,4 @@
-## DNSBrute
+# DNSBrute
 
 A simple, concurrent Go module for brute-forcing subdomains using a wordlist and DNS resolution. Supports optional numeric suffixes and configurable threading.
 
