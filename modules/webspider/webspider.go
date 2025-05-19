@@ -298,7 +298,7 @@ func (w *WebSpider) Set(n string, v string) []string {
                 return []string{n, v}
             }
         }
-    return []string{}
+    return []string{"Error", "Option not found"}
 }
 
 func (w *WebSpider) Help() [][]string {
