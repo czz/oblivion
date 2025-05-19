@@ -457,7 +457,7 @@ func (p *PortScanner) Set(n string, v string) []string {
                 return []string{opt.Name, fmt.Sprint(v)}
             }
         }
-    return []string{}
+    return []string{"Error", "Option not found"}
 }
 
 func (p *PortScanner) Help() [][]string {
