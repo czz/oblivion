@@ -1,6 +1,6 @@
 ## Subdomains Search
 
-A lightweight Go module for discovering subdomains of a given domain by querying multiple free online sources in parallel.
+A lightweight Oblivion Go module for discovering subdomains of a given domain by querying multiple free online sources in parallel.
 
 ## Features
 
