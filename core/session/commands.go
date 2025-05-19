@@ -42,7 +42,7 @@ func (s *Session) handleHelp(args []string) {
         {"  use <module>", "Selects a module to use"},
         {"  options", "Displays available options for the selected module"},
         {"  set <option> <value>", "Sets a value for a module option"},
-        {"  run", "Executes the selected module"},
+        {"  run [&]","Executes the selected module in foreground (wait) or background (no wait)"},
         {"  show [module_name]", "Show results of a module. Module name is optional when inside a module."},
         {"  save <filename>", "Saves the module output to the specified file"},
         {"  back", "Returns to core (exit module)"},
