@@ -28,7 +28,7 @@ var defaultSources = []string{
 	"https://urlscan.io/api/v1/search/?q=domain:%s",
 	"https://otx.alienvault.com/api/v1/indicators/domain/%s/passive_dns",
 	"https://jldc.me/anubis/subdomains/%s",
-	"https://api.hackertarget.com/hostsearch/?q=%s",
+  "https://api.hackertarget.com/hostsearch/?q=%s",
 }
 
 // SubdomainsSearch holds state and configuration for a subdomain scan
@@ -264,9 +264,12 @@ func (s *SubdomainsSearch) Set(n string, v string) []string {
 	}
 
 	om := *s.optionManager
-	m, _ := om.Get(n)
-	m.Set(v)
-	return []string{m.Name, m.Value.(string)}
+	m, ok := om.Get(n)
+	if ok {
+	    m.Set(v)
+	    return []string{m.Name, m.Value.(string)}
+  }
+	return []string{"Error", "Option not found"}
 }
 
 // Help returns usage help for the CLI
