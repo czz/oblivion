@@ -8,6 +8,7 @@ import (
     "strings"
     "net/url"
     "net"
+    "context"
 
     "github.com/czz/oblivion/utils/option"
     "github.com/czz/oblivion/utils/help"
@@ -67,61 +68,73 @@ func NewWebSpider() *WebSpider {
     }
 }
 
-func (w *WebSpider) Run() [][]string {
+func (w *WebSpider) Run(ctx context.Context) [][]string {
     var targets []string
     var saveFullHTML bool
     var depth int
     var userAgent string
     var allowedDomains []string
-    var includeCategories bool = true
+    var includeCategories = true
 
-    if val, ok := w.optionManager.Get("TARGETS"); ok {
-        if v, ok := val.Value.([]string); ok {
-            targets = v
-        }
+    if v, ok := w.optionManager.Get("TARGETS"); ok {
+        targets = v.Value.([]string)
     }
-    if val, ok := w.optionManager.Get("DEPTH"); ok {
-        if v, ok := val.Value.(int); ok {
-            depth = v
-        }
+    if v, ok := w.optionManager.Get("DEPTH"); ok {
+        depth = v.Value.(int)
     }
-    if val, ok := w.optionManager.Get("SAVE_HTML"); ok {
-        if v, ok := val.Value.(bool); ok {
-            saveFullHTML = v
-        }
+    if v, ok := w.optionManager.Get("SAVE_HTML"); ok {
+        saveFullHTML = v.Value.(bool)
     }
-    if val, ok := w.optionManager.Get("USER_AGENT"); ok {
-        if v, ok := val.Value.(string); ok {
-            userAgent = v
-        }
+    if v, ok := w.optionManager.Get("USER_AGENT"); ok {
+        userAgent = v.Value.(string)
     }
-    if val, ok := w.optionManager.Get("ALLOWED_DOMAINS"); ok {
-        if v, ok := val.Value.([]string); ok {
-            allowedDomains = v
-        }
+    if v, ok := w.optionManager.Get("ALLOWED_DOMAINS"); ok {
+        allowedDomains = v.Value.([]string)
     }
-    if val, ok := w.optionManager.Get("INCLUDE_CATEGORIES"); ok {
-        if v, ok := val.Value.(bool); ok {
-            includeCategories = v
-        }
+    if v, ok := w.optionManager.Get("INCLUDE_CATEGORIES"); ok {
+        includeCategories = v.Value.(bool)
     }
 
     var rows [][]string
-    for _, url := range targets {
-        w.recursiveCrawl(url, saveFullHTML, 0, depth, userAgent, allowedDomains, includeCategories, &rows)
+    for _, u := range targets {
+        // Exit early if canceled
+        select {
+        case <-ctx.Done():
+            w.visited = make(map[string]bool)
+            w.table = rows
+            return rows
+        default:
+        }
+        w.recursiveCrawl(ctx, u, saveFullHTML, 0, depth, userAgent, allowedDomains, includeCategories, &rows)
     }
     w.visited = make(map[string]bool)
     w.table = rows
     return rows
 }
 
-func (w *WebSpider) recursiveCrawl(url string, includeHTML bool, currentDepth int, maxDepth int, userAgent string, allowedDomains []string, includeCategories bool, rows *[][]string) {
-    if currentDepth >= maxDepth || w.visited[url] {
+func (w *WebSpider) recursiveCrawl(
+    ctx context.Context,
+    urlStr string,
+    includeHTML bool,
+    currentDepth, maxDepth int,
+    userAgent string,
+    allowedDomains []string,
+    includeCategories bool,
+    rows *[][]string,
+) {
+    // Respect depth and visited
+    if currentDepth >= maxDepth || w.visited[urlStr] {
         return
     }
-    w.visited[url] = true
+    // Cancel if requested
+    select {
+    case <-ctx.Done():
+        return
+    default:
+    }
 
-    result := w.crawl(url, includeHTML, userAgent, includeCategories)
+    w.visited[urlStr] = true
+    result := w.crawl(urlStr, includeHTML, userAgent, includeCategories)
     w.results = append(w.results, result)
 
     *rows = append(*rows, []string{"URL", "TITLE", "TOTAL LINKS"})
@@ -134,7 +147,7 @@ func (w *WebSpider) recursiveCrawl(url string, includeHTML bool, currentDepth in
 
     for _, link := range result.Links {
         if isAllowed(link, allowedDomains) {
-            w.recursiveCrawl(link, includeHTML, currentDepth+1, maxDepth, userAgent, allowedDomains, includeCategories, rows)
+            w.recursiveCrawl(ctx, link, includeHTML, currentDepth+1, maxDepth, userAgent, allowedDomains, includeCategories, rows)
         }
     }
 }

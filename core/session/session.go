@@ -4,6 +4,8 @@ import (
     "os"
     "time"
     "unicode/utf8"
+    "context"
+    "sync"
 
     "github.com/chzyer/readline"
     "github.com/czz/oblivion/modules"
@@ -23,6 +25,8 @@ type Session struct {
     activeModule  *modules.Module            // Currently active module
     terminalWidth int                        // Terminal width in characters
     commands      map[string]commandFunc     // Registered CLI commands
+    runningCancels map[string]context.CancelFunc
+    mu             sync.Mutex
 }
 
 // NewSession initializes and returns a new Session instance.
@@ -34,6 +38,7 @@ func NewSession() *Session {
         Tui:          tui.NewTui(),
         activeModule: nil,
         commands:     make(map[string]commandFunc),
+        runningCancels: make(map[string]context.CancelFunc),
     }
     s.registerCommands()
     return s
@@ -124,6 +129,7 @@ func (s *Session) commandCompleter() *readline.PrefixCompleter {
         readline.PcItem("search"),
         readline.PcItem("use", useChildren...),
         readline.PcItem("show", useChildren...),
+        readline.PcItem("stop", useChildren...),
         readline.PcItem("exit"),
     }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"context"
 
 	"github.com/czz/oblivion/utils/option"
 	"github.com/czz/oblivion/utils/help"
@@ -192,49 +193,77 @@ func (s *SubdomainsSearch) Options() []map[string]string {
 }
 
 // Run launches the subdomain enumeration across all configured sources
-func (s *SubdomainsSearch) Run() [][]string {
-	var allSubdomains []string
-	var sources []string
-	var domain string
+func (s *SubdomainsSearch) Run(ctx context.Context) [][]string {
+    var allSubdomains []string
+    var sources []string
+    var domain string
 
-	sopt, _ := s.optionManager.Get("SOURCES_URI")
-	if val, ok := sopt.Value.([]string); ok {
-		sources = val
-	}
+    // Prendi le sorgenti e il dominio dalle opzioni
+    if sopt, _ := s.optionManager.Get("SOURCES_URI"); sopt.Value != nil {
+        sources = sopt.Value.([]string)
+    }
+    if dopt, _ := s.optionManager.Get("DOMAIN"); dopt.Value != nil {
+        domain = dopt.Value.(string)
+    }
 
-	dopt, _ := s.optionManager.Get("DOMAIN")
-	if val, ok := dopt.Value.(string); ok {
-		domain = val
-	}
+    ch := make(chan []string, len(sources))
+    var wg sync.WaitGroup
 
-	var wg sync.WaitGroup
-	ch := make(chan []string, len(sources))
+    // Disparo una goroutine per ogni fonte
+    for _, u := range sources {
+        // Controllo se è già arrivata la cancel
+        select {
+        case <-ctx.Done():
+            return nil
+        default:
+        }
 
-	for _, url := range sources {
-		wg.Add(1)
-		go func(u string) {
-			defer wg.Done()
-			subdomains, err := s.fetchSubdomains(u, domain)
-			if err == nil {
-				ch <- subdomains
-			}
-		}(url)
-	}
+        wg.Add(1)
+        go func(url string) {
+            defer wg.Done()
 
-	wg.Wait()
-	close(ch)
+            // Anche dentro il worker controllo la cancel
+            select {
+            case <-ctx.Done():
+                return
+            default:
+            }
 
-	for subs := range ch {
-		allSubdomains = append(allSubdomains, subs...)
-	}
+            subs, err := s.fetchSubdomains(url, domain)
+            if err == nil {
+                ch <- subs
+            }
+        }(u)
+    }
 
-	s.results = s.uniqueSortedList(allSubdomains)
+    // Chiudo il canale quando tutte le fetch sono completate
+    go func() {
+        wg.Wait()
+        close(ch)
+    }()
 
-	var res [][]string
-	for _, v := range s.results {
-		res = append(res, []string{v})
-	}
-	return res
+    // Raccolgo i risultati finché non arriva una cancel o il canale non viene chiuso
+    for {
+        select {
+        case <-ctx.Done():
+            return nil
+        case subs, ok := <-ch:
+            if !ok {
+                goto EMIT
+            }
+            allSubdomains = append(allSubdomains, subs...)
+        }
+    }
+
+EMIT:
+    // Unisco, filtro i duplicati e ordino
+    s.results = s.uniqueSortedList(allSubdomains)
+
+    var table [][]string
+    for _, d := range s.results {
+        table = append(table, []string{d})
+    }
+    return table
 }
 
 // Save writes the collected subdomains to a specified file

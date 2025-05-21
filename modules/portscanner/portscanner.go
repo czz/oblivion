@@ -11,6 +11,7 @@ import (
     "time"
     "net/http"
     "sort"
+    "context"
 
     "github.com/go-ping/ping"
     "github.com/czz/oblivion/utils/option"
@@ -81,57 +82,90 @@ func NewPortScanner() *PortScanner {
     }
 }
 
-func (p *PortScanner) Run() [][]string {
+func (p *PortScanner) Run(ctx context.Context) [][]string {
     var targets []string
     var threads int
 
-    targets_opt, _ := p.optionManager.Get("TARGETS")
-    if val, ok := targets_opt.Value.([]string); ok {
-      targets = val
+    // Recupera TARGETS e THREADS dalle opzioni
+    if val, ok := p.optionManager.Get("TARGETS"); ok {
+        if ts, ok := val.Value.([]string); ok {
+            targets = ts
+        }
+    }
+    if val, ok := p.optionManager.Get("THREADS"); ok {
+        if th, ok := val.Value.(int); ok {
+            threads = th
+        }
     }
 
-    threads_opt, _ := p.optionManager.Get("THREADS")
-    if val, ok := threads_opt.Value.(int); ok {
-      threads = val
-    }
-
-    var wg sync.WaitGroup
+    // Prepara canali e WaitGroup
     tasks := make(chan string, len(targets))
     results := make(chan JsonScanResult, len(targets))
+    var wg sync.WaitGroup
 
+    // Popola il canale tasks
     for _, target := range targets {
-        ips := expandCIDR(target)
-        for _, ip := range ips {
+        for _, ip := range expandCIDR(target) {
             tasks <- ip
         }
     }
     close(tasks)
 
+    // Avvia i worker
     for i := 0; i < threads; i++ {
         wg.Add(1)
         go func() {
             defer wg.Done()
-            for target := range tasks {
-                result := p.scanTarget(target)
-                results <- result
+            for {
+                select {
+                case <-ctx.Done():
+                    // Contesto cancellato: esci subito
+                    return
+                case ip, more := <-tasks:
+                    if !more {
+                        return
+                    }
+                    // Esegui scanTarget (potresti far passare il ctx in scanTarget per usarlo nelle richieste)
+                    result := p.scanTarget(ip)
+                    // Invia il risultato solo se il contesto non è stato cancellato
+                    select {
+                    case <-ctx.Done():
+                        return
+                    case results <- result:
+                    }
+                }
             }
         }()
     }
 
-    wg.Wait()
-    close(results)
+    // Chiude il canale results quando tutti i worker hanno finito
+    go func() {
+        wg.Wait()
+        close(results)
+    }()
 
+    // Raccoglie i risultati
     var tableData [][]string
-    for res := range results {
-        p.jsonResults = append(p.jsonResults, res)
-        for port, banner := range res.Open {
-            proto := res.Protocol[port]
-            row := []string{res.IP, fmt.Sprintf("%d/%s", port, proto), banner}
-            tableData = append(tableData, row)
+    for {
+        select {
+        case <-ctx.Done():
+            // Se è arrivata la cancellazione, usciamo dal loop
+            return tableData
+        case res, more := <-results:
+            if !more {
+                // canale chiuso: abbiamo finito
+                p.results = tableData
+                return tableData
+            }
+            // aggiunge ai risultati JSON e alla tabella
+            p.jsonResults = append(p.jsonResults, res)
+            for port, banner := range res.Open {
+                proto := res.Protocol[port]
+                row := []string{res.IP, fmt.Sprintf("%d/%s", port, proto), banner}
+                tableData = append(tableData, row)
+            }
         }
     }
-    p.results = tableData
-    return tableData
 }
 
 func (p *PortScanner) scanTarget(ip string) JsonScanResult {

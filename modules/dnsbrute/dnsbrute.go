@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"strconv"
+	"context"
 
 	"github.com/czz/oblivion/utils/option"
 	"github.com/czz/oblivion/utils/help"
@@ -53,80 +54,121 @@ func NewDNSBrute() *DNSBrute {
 }
 
 // Run starts the brute force process
-func (b *DNSBrute) Run() [][]string {
-	b.results = []string{}
-	domainOpt, _ := b.optionManager.Get("DOMAIN")
-	wordlistOpt, _ := b.optionManager.Get("WORDLIST")
-	threadsOpt, _ := b.optionManager.Get("THREADS")
-	suffixesOpt, _ := b.optionManager.Get("SUFFIXES")
+func (b *DNSBrute) Run(ctx context.Context) [][]string {
+    b.results = []string{}
 
-	domain := domainOpt.Value.(string)
-	wordlistPath := wordlistOpt.Value.(string)
-	threadCount, err := strconv.Atoi(threadsOpt.Value.(string))
-	if err != nil || threadCount <= 0 {
-		threadCount = 20 // default fallback
-	}
+    // Estrai opzioni
+    domainOpt, _ := b.optionManager.Get("DOMAIN")
+    wordlistOpt, _ := b.optionManager.Get("WORDLIST")
+    threadsOpt, _ := b.optionManager.Get("THREADS")
+    suffixesOpt, _ := b.optionManager.Get("SUFFIXES")
 
-	suffixes, _ := strconv.ParseBool(suffixesOpt.Value.(string))
+    domain := domainOpt.Value.(string)
+    wordlistPath := wordlistOpt.Value.(string)
+    threadCount, err := strconv.Atoi(threadsOpt.Value.(string))
+    if err != nil || threadCount <= 0 {
+        threadCount = 20
+    }
+    suffixes, _ := strconv.ParseBool(suffixesOpt.Value.(string))
 
-	if domain == "" || wordlistPath == "" {
-		return [][]string{{"Error: DOMAIN or WORDLIST not set"}}
-	}
+    if domain == "" || wordlistPath == "" {
+        return [][]string{{"Error: DOMAIN or WORDLIST not set"}}
+    }
 
-	words, err := loadWordlist(wordlistPath)
-	if err != nil {
-		return [][]string{{"Error reading wordlist"}}
-	}
+    // Carica wordlist
+    words, err := loadWordlist(wordlistPath)
+    if err != nil {
+        return [][]string{{"Error reading wordlist"}}
+    }
 
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, threadCount)
-	resCh := make(chan string, len(words))
+    // Canale task e canale risultati
+    tasks := make(chan string, len(words))
+    resCh := make(chan string, len(words))
 
-	for _, prefix := range words {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(sub string) {
-			defer wg.Done()
-			defer func() { <-sem }()
+    // Popola tasks e chiudi
+    for _, w := range words {
+        tasks <- w
+    }
+    close(tasks)
 
-			fqdn := fmt.Sprintf("%s.%s", sub, domain)
-			if resolveDomain(fqdn) {
-				// Add the base subdomain to the results
-				resCh <- fqdn
+    var wg sync.WaitGroup
 
-				// If suffixes are enabled, append numeric suffixes
-				if suffixes {
-					for _, suffix := range generateNumberSuffixes() {
-						fqdnWithSuffix := fmt.Sprintf("%s.%s", sub+suffix, domain)
-						if resolveDomain(fqdnWithSuffix) {
-							resCh <- fqdnWithSuffix
-						}
-					}
-				}
-			}
-		}(prefix)
-	}
+    // Avvia worker
+    for i := 0; i < threadCount; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            for {
+                select {
+                case <-ctx.Done():
+                    // Contesto cancellato: esci subito
+                    return
+                case sub, more := <-tasks:
+                    if !more {
+                        return
+                    }
+                    // genera FQDN
+                    fqdn := fmt.Sprintf("%s.%s", sub, domain)
+                    if resolveDomain(fqdn) {
+                        // invio sicuro sul canale risultati
+                        select {
+                        case <-ctx.Done():
+                            return
+                        case resCh <- fqdn:
+                        }
+                        // gestisci i suffissi
+                        if suffixes {
+                            for _, suf := range generateNumberSuffixes() {
+                                sfqdn := fmt.Sprintf("%s.%s", sub+suf, domain)
+                                if resolveDomain(sfqdn) {
+                                    select {
+                                    case <-ctx.Done():
+                                        return
+                                    case resCh <- sfqdn:
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }()
+    }
 
-	wg.Wait()
-	close(resCh)
+    // Goroutine di pulizia: chiude resCh al termine di tutti i worker
+    go func() {
+        wg.Wait()
+        close(resCh)
+    }()
 
-	// Collect unique results
-	unique := make(map[string]struct{})
-	for r := range resCh {
-		unique[r] = struct{}{}
-	}
+    // Colleziona i risultati (interrompi se ctx viene cancellato)
+    unique := make(map[string]struct{})
+    for {
+        select {
+        case <-ctx.Done():
+            // cancellato: ritorna i risultati raccolti finora
+            goto END
+        case r, more := <-resCh:
+            if !more {
+                goto END
+            }
+            unique[r] = struct{}{}
+        }
+    }
 
-	// Sort the results and convert them to a list
-	for k := range unique {
-		b.results = append(b.results, k)
-	}
-	sort.Strings(b.results)
-
-	var out [][]string
-	for _, r := range b.results {
-		out = append(out, []string{r})
-	}
-	return out
+END:
+    // Ordina e prepara l'output
+    var keys []string
+    for k := range unique {
+        keys = append(keys, k)
+    }
+    sort.Strings(keys)
+    var out [][]string
+    for _, k := range keys {
+        out = append(out, []string{k})
+    }
+    b.results = keys
+    return out
 }
 
 // Helper: generate numeric suffixes to append

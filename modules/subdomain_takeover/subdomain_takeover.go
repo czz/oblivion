@@ -9,6 +9,7 @@ import (
     "strings"
     "sync"
     "time"
+    "context"
 
     "github.com/czz/oblivion/utils/help"
     "github.com/czz/oblivion/utils/option"
@@ -65,134 +66,147 @@ func NewSubdomainTakeover() *SubdomainTakeover {
     }
 }
 
-func (s *SubdomainTakeover) Run() [][]string {
+func (s *SubdomainTakeover) Run(ctx context.Context) [][]string {
+    // Prepara la lista di domini
     var domains []string
-    dopt, _ := s.optionManager.Get("DOMAINS")
-/*    if path, ok := dopt.Value.(string); ok && path != "" {
-        file, err := os.Open(path)
-        if err != nil {
-            return [][]string{{"Error opening domains file:",fmt.Sprintf("%v", err)}}
-        }
-        defer file.Close()
-        scanner := bufio.NewScanner(file)
-        for scanner.Scan() {
-            domains = append(domains, scanner.Text())
+    if val, ok := s.optionManager.Get("DOMAINS"); ok {
+        if vs, ok := val.Value.([]string); ok {
+            domains = vs
         }
     }
-*/
-if val, ok := dopt.Value.([]string); ok {
-  domains = val
-}
 
-//fmt.Println("DOMAIN",domains)
     sem := make(chan struct{}, MaxConcurrency)
-  	var wg sync.WaitGroup
+    var wg sync.WaitGroup
 
-  	resultsCh := make(chan []string)
-  	var results [][]string
-  	var resultsMu sync.Mutex
+    resultsCh := make(chan []string)
+    var mu sync.Mutex
+    var results [][]string
 
-  	go func() {
-    		for rec := range resultsCh {
-      			resultsMu.Lock()
-  		    	results = append(results, rec)
-    			  resultsMu.Unlock()
-    		}
+    // Collector
+    go func() {
+        for rec := range resultsCh {
+            mu.Lock()
+            results = append(results, rec)
+            mu.Unlock()
+        }
     }()
 
+    // Lancia i worker
     for _, domain := range domains {
         domain = strings.TrimSpace(domain)
         if domain == "" {
             continue
         }
+
+        select {
+        case <-ctx.Done():
+            break // esce dal for
+        default:
+        }
+
         wg.Add(1)
-        sem <- struct{}{} // acquisisce uno slot
+        sem <- struct{}{} // prende uno slot
         go func(d string) {
             defer wg.Done()
-            defer func() { <-sem }() // rilascia lo slot
+            defer func() { <-sem }()
 
-            // Lookup CNAME
+            // Rispetta la cancellazione
+            select {
+            case <-ctx.Done():
+                return
+            default:
+            }
+
             cname, err := net.LookupCNAME(d)
             if err != nil {
-  //            fmt.Println("CNAME","ERROR")
-                // Dominio inesistente (NXDOMAIN) o altro errore DNS
-                resultsCh <- []string{d, "", "", "NXDOMAIN", "false"}
+                select {
+                case resultsCh <- []string{d, "", "", "NXDOMAIN", "false"}:
+                case <-ctx.Done():
+                }
                 return
             }
             cname = strings.TrimSuffix(cname, ".")
 
             if cname == d {
-                // Nessun record CNAME (record A diretto o nessun record)
-//fmt.Println("A",cname)
                 return
             }
 
-            // Controlla contro i servizi vulnerabili noti
+            // Per ciascun servizio noto
             for _, svc := range services {
                 for _, pattern := range svc.Cname {
                     if strings.HasSuffix(cname, pattern) {
-                        // Trovato un servizio che corrisponde al pattern
                         if !svc.Vulnerable {
-                            // Servizio noto come sicuro
                             return
                         }
-                        // Verifica il fingerprint NXDOMAIN
+
+                        // NXDOMAIN fingerprint
                         for _, fp := range svc.Fingerprint {
                             if fp == "NXDOMAIN" {
-                                _, err := net.LookupHost(cname)
-                                if err != nil {
-  //                                  fmt.Println("LOOKUP HOST KO")
-                                    // CNAME target non trovato -> vulnerabile
-                                    resultsCh <- []string{d, cname, svc.Service, "Vulnerable", "true"}
-                                    //fmt.Printf("[!] Takeover trovato: %s (%s)\n", d, svc.Service)
-                                    //resultsCh <- []string{domain, service, fullURL}
+                                if _, err := net.LookupHost(cname); err != nil {
+                                    select {
+                                    case resultsCh <- []string{d, cname, svc.Service, "Vulnerable", "true"}:
+                                    case <-ctx.Done():
+                                    }
                                 }
-  //                              fmt.Println("NXDOMAIN")
                                 return
                             }
                         }
-                        // Esegui richieste HTTP/HTTPS per controllare i fingerprint
+
+                        // HTTP fingerprint con contesto
                         client := &http.Client{Timeout: 10 * time.Second}
                         for _, scheme := range []string{"http://", "https://"} {
-                            req, err := http.NewRequest("GET", scheme+d, nil)
+                            req, err := http.NewRequestWithContext(ctx, "GET", scheme+d, nil)
                             if err != nil {
                                 continue
                             }
-                            req.Header.Set("User-Agent", "subdomain-takeover-scanner")
                             resp, err := client.Do(req)
                             if err != nil {
                                 continue
                             }
-                            content, err := io.ReadAll(resp.Body)
+                            body, _ := io.ReadAll(resp.Body)
                             resp.Body.Close()
-                            if err != nil {
-                                continue
-                            }
-                            body := string(content)
-//                            fmt.Println("BODY")
+
                             for _, fp := range svc.Fingerprint {
-                                if strings.Contains(body, fp) {
-                                    resultsCh <- []string{d, cname, svc.Service, "Vulnerable", "true"}
-//                                    fmt.Println("VULN")
+                                if strings.Contains(string(body), fp) {
+                                    select {
+                                    case resultsCh <- []string{d, cname, svc.Service, "Vulnerable", "true"}:
+                                    case <-ctx.Done():
+                                    }
                                     return
                                 }
                             }
                         }
-                        // Se non trovato fingerprint
-//                        fmt.Println("NO FINGER",domains)
                         return
                     }
                 }
             }
-            // Nessun servizio che corrisponde per questo CNAME
-      	}(domain)
+        }(domain)
     }
 
-    wg.Wait()
-    close(resultsCh)
+    // Chiude resultsCh solo quando tutti i worker hanno finito
+    go func() {
+        wg.Wait()
+        close(resultsCh)
+    }()
 
-    if len(results) == 0 { return nil }
+    // Attende che la cancellazione o il termine dei worker
+    select {
+    case <-ctx.Done():
+        // qui possiamo loggare o pulire
+    case <-func() chan struct{} {
+        done := make(chan struct{})
+        go func() {
+            wg.Wait()
+            close(done)
+        }()
+        return done
+    }():
+    }
+
     s.results = results
+    if len(results) == 0 {
+        return nil
+    }
     return s.results
 }
 

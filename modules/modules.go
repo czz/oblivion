@@ -2,6 +2,7 @@ package modules
 
 import (
     "fmt"
+    "context"
 
     "github.com/czz/oblivion/modules/dnsbrute"
     "github.com/czz/oblivion/modules/portscanner"
@@ -17,7 +18,7 @@ type Module interface {
     Author() string          // Author of the module
     Prompt() string          // Prompt related to the module
     Set(string, string) []string   // Set a value for the module
-    Run() [][]string         // Run the module
+    Run(ctx context.Context) [][]string         // Run the module
     Running() bool           // Check if the module is running
     Start() error            // Start the module
     Stop() error             // Stop the module
