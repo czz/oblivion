@@ -1,6 +1,8 @@
 
 # Oblivion
 
+![logo](https://oblivion.czz78.com/images/oblivion_logo_250.png)
+
 **Oblivion is a modular framework written in Go designed for web hacking activities. It offers an interactive REPL interface and a highly extensible modular structure, ideal for developing custom tools for web content analysis and manipulation.**
 
 ---
