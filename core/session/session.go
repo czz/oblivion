@@ -140,10 +140,14 @@ func (s *Session) commandCompleter() *readline.PrefixCompleter {
             setChildren = append(setChildren, readline.PcItem(opt["name"]))
         }
 
+        setRunBackground := []readline.PrefixCompleterInterface{
+            readline.PcItem("&"),
+        }
+
         base = append(base,
             readline.PcItem("options"),
             readline.PcItem("set", setChildren...),
-            readline.PcItem("run"),
+            readline.PcItem("run", setRunBackground...),
             readline.PcItem("save"),
             readline.PcItem("back"),
         )

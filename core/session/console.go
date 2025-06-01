@@ -3,6 +3,9 @@ package session
 import (
     "fmt"
     "strings"
+    "io"
+
+    "github.com/chzyer/readline"
 )
 
 // ReadlineLoop is the main loop for reading user input from the terminal.
@@ -14,9 +17,16 @@ func (s *Session) ReadlineLoop() {
 
     for {
         line, err := s.ReadLine.Readline()
-        if err != nil {
+        if err == io.EOF {
+            fmt.Println(s.Tui.Green("Exiting ..."))
             s.Stop()
-            fmt.Println("Error reading command line")
+            return
+        }
+
+        if err != nil && err != readline.ErrInterrupt {
+          fmt.Println(err)
+            s.Stop()
+            fmt.Sprintf(s.Tui.Red("Error reading command line: %s"), err)
             return
         }
 

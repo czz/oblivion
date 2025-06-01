@@ -2,33 +2,44 @@ package option
 
 // OptionManager manages a collection of options.
 type OptionManager struct {
-    options map[string]*Option // A map of options indexed by their name.
+    options   map[string]*Option // A map of options indexed by their name.
+    positions map[int]string     // Index of registration order
+    nextPos   int                // Automatically managed position counter
 }
 
 // NewOptionManager creates a new OptionManager instance.
 func NewOptionManager() *OptionManager {
     return &OptionManager{
-        options: make(map[string]*Option), // Initializes the map of options.
+        options:   make(map[string]*Option),
+        positions: make(map[int]string),
+        nextPos:   0,
     }
 }
 
-// Register registers a new option with the OptionManager.
+// Register registers a new option with the OptionManager, assigning position automatically.
 func (m *OptionManager) Register(opt *Option) {
-    m.options[opt.Name] = opt // Adds the option to the map of options.
+    m.options[opt.Name] = opt
+    m.positions[m.nextPos] = opt.Name
+    m.nextPos++
 }
 
 // Get retrieves an option by its name from the OptionManager.
-// Returns the option and a boolean indicating if it exists.
 func (m *OptionManager) Get(name string) (*Option, bool) {
-    opt, ok := m.options[name] // Attempts to retrieve the option from the map.
+    opt, ok := m.options[name]
     return opt, ok
 }
 
-// List returns a slice of all options managed by the OptionManager.
+// List returns all options in registration order.
 func (m *OptionManager) List() []*Option {
-    opts := []*Option{}
-    for _, o := range m.options {
-        opts = append(opts, o) // Adds each option to the slice.
+    opts := make([]*Option, 0, len(m.options))
+    for i := 0; i < m.nextPos; i++ {
+        name, ok := m.positions[i]
+        if !ok {
+            continue
+        }
+        if opt, exists := m.options[name]; exists {
+            opts = append(opts, opt)
+        }
     }
     return opts
 }

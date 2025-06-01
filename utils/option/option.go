@@ -137,7 +137,7 @@ func formatStruct(v interface{}) string {
 func formatPointer(v interface{}) string {
     val := reflect.ValueOf(v)
     if val.IsNil() {
-        return "nil"
+        return ""
     }
     return fmt.Sprintf("%v", val.Elem())
 }

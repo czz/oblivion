@@ -5,6 +5,8 @@ import (
     "os"
     "strings"
     "context"
+    "os/signal"
+    "syscall"
 
     "github.com/czz/oblivion/core/tui"
     "github.com/czz/oblivion/modules"
@@ -44,7 +46,7 @@ func (s *Session) handleHelp(args []string) {
         {"  use <module>", "Selects a module to use"},
         {"  options", "Displays available options for the selected module"},
         {"  set <option> <value>", "Sets a value for a module option"},
-        {"  run [&]","Executes the selected module in foreground (wait) or background (no wait)"},
+        {"  run [&]","Executes the selected module in foreground (wait, crtl-c to stop) or background (no wait)"},
         {"  stop [module_name]","stop the selected module in background"},
         {"  show [module_name]", "Show results of a module. Module name is optional when inside a module."},
         {"  save <filename>", "Saves the module output to the specified file"},
@@ -162,17 +164,14 @@ func (s *Session) handleSet(args []string) {
 
 // handleRun executes the active module and prints the results.
 func (s *Session) handleRun(args []string) {
-    // Check if a module is active
     if !s.isModuleActive() {
         fmt.Println(s.Tui.Red("No active module."))
         return
     }
 
     module := *s.activeModule
-
     prompt := module.Prompt()
 
-        // Se è già in esecuzione, segnalo…
     s.mu.Lock()
     if _, running := s.runningCancels[prompt]; running {
         s.mu.Unlock()
@@ -183,13 +182,12 @@ func (s *Session) handleRun(args []string) {
 
     ctx, cancel := context.WithCancel(context.Background())
 
-    runInBackground := len(args)>0 && args[0]=="&"
+    runInBackground := len(args) > 0 && args[0] == "&"
     if runInBackground {
         go func() {
             module.Start()
             defer module.Stop()
             defer func() {
-                // quando finisce, rimuovo dal registro
                 s.mu.Lock()
                 delete(s.runningCancels, prompt)
                 s.mu.Unlock()
@@ -198,22 +196,33 @@ func (s *Session) handleRun(args []string) {
             fmt.Println(s.Tui.Green("\nModule "+prompt+" finished in background"))
             s.Refresh()
         }()
-        // prima di tornare, registro il cancel
         s.mu.Lock()
         s.runningCancels[prompt] = cancel
         s.mu.Unlock()
-
-        fmt.Println(s.Tui.Yellow("Module "+prompt+" started in background."))
+        fmt.Println(s.Tui.Yellow("Module " + prompt + " started in background."))
     } else {
+        // --- Intercept Ctrl+C ---
+        sigs := make(chan os.Signal, 1)
+        signal.Notify(sigs, os.Interrupt, syscall.SIGINT)
+
+        go func() {
+            <-sigs
+            cancel()
+        }()
+
         module.Start()
         defer module.Stop()
-        // Esecuzione in foreground non richiede registrazione a meno che tu non voglia fermarla
+
         results := module.Run(ctx)
         fmt.Println(s.Tui.Table(&tui.Table{
             LineSeparator: false,
             Padding:       1,
             MaxWidth:      s.terminalWidth / 3,
         }, results))
+
+        //Clean up signal manager after execution
+        signal.Stop(sigs)
+        close(sigs)
     }
 }
 
@@ -236,7 +245,7 @@ func (s *Session) handleStop(args []string) {
         return
     }
 
-    cancel() // invoca ctx.Done() per quel modulo
+    cancel() // invocke ctx.Done() for that module
     s.mu.Lock()
     delete(s.runningCancels, name)
     s.mu.Unlock()

@@ -1,8 +1,11 @@
 package modules
 
+import "sort"
+
 // ModuleManager is responsible for managing modules dynamically.
 type ModuleManager struct {
     modules map[string]Module
+    positions map[int]string
 }
 
 // NewManager creates a new ModuleManager instance.
@@ -25,10 +28,12 @@ func (m *ModuleManager) Get(name string) (Module, bool) {
 
 // List returns a list of names of all registered modules.
 func (m *ModuleManager) List() []string {
+
     keys := make([]string, 0, len(m.modules))
-    for k := range m.modules {
-        keys = append(keys, k)
+    for key := range m.modules{
+        keys = append(keys, key)
     }
+
+    sort.Strings(keys) // ✅ Sort alphabetically
     return keys
 }
-
