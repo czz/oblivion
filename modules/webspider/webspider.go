@@ -46,6 +46,7 @@ func NewWebSpider() *WebSpider {
     om.Register(option.NewOption("USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36", false, "User-Agent string to use"))
     om.Register(option.NewOption("ALLOWED_DOMAINS", []string{}, false, "List of allowed domains for recursion"))
     om.Register(option.NewOption("INCLUDE_CATEGORIES", true, false, "Categorize extracted links (scripts, images, media, etc.)"))
+    om.Register(option.NewOption("HTTP_PROXY", "", false, "HTTP proxy to use (e.g. http://127.0.0.1:8080)"))
 
     helpManager := help.NewHelpManager()
     helpManager.Register("webspider", "Webspider module", [][]string{
@@ -55,6 +56,7 @@ func NewWebSpider() *WebSpider {
         {"USER_AGENT", "Mozilla/5.0 ...", "User agent string"},
         {"ALLOWED_DOMAINS", "example.com or abc.com,def.com or /pathtofile.txt", "List of allowed domains"},
         {"INCLUDE_CATEGORIES", "true or false", "Classify links into images, scripts, media, etc."},
+        {"HTTP_PROXY", "", "HTTP proxy to use (e.g. http://127.0.0.1:8080)"},
     })
 
     return &WebSpider{
@@ -75,6 +77,8 @@ func (w *WebSpider) Run(ctx context.Context) [][]string {
     var userAgent string
     var allowedDomains []string
     var includeCategories = true
+    var proxy string
+
 
     if v, ok := w.optionManager.Get("TARGETS"); ok {
         targets = v.Value.([]string)
@@ -94,6 +98,9 @@ func (w *WebSpider) Run(ctx context.Context) [][]string {
     if v, ok := w.optionManager.Get("INCLUDE_CATEGORIES"); ok {
         includeCategories = v.Value.(bool)
     }
+    if v, ok := w.optionManager.Get("HTTP_PROXY"); ok {
+        proxy = v.Value.(string)
+    }
 
     var rows [][]string
     for _, u := range targets {
@@ -105,23 +112,14 @@ func (w *WebSpider) Run(ctx context.Context) [][]string {
             return rows
         default:
         }
-        w.recursiveCrawl(ctx, u, saveFullHTML, 0, depth, userAgent, allowedDomains, includeCategories, &rows)
+        w.recursiveCrawl(ctx, u, saveFullHTML, 0, depth, userAgent, allowedDomains, includeCategories, proxy, &rows)
     }
     w.visited = make(map[string]bool)
     w.table = rows
     return rows
 }
 
-func (w *WebSpider) recursiveCrawl(
-    ctx context.Context,
-    urlStr string,
-    includeHTML bool,
-    currentDepth, maxDepth int,
-    userAgent string,
-    allowedDomains []string,
-    includeCategories bool,
-    rows *[][]string,
-) {
+func (w *WebSpider) recursiveCrawl(ctx context.Context,urlStr string, includeHTML bool, currentDepth, maxDepth int, userAgent string, allowedDomains []string, includeCategories bool, proxy string, rows *[][]string) {
     // Respect depth and visited
     if currentDepth >= maxDepth || w.visited[urlStr] {
         return
@@ -134,7 +132,7 @@ func (w *WebSpider) recursiveCrawl(
     }
 
     w.visited[urlStr] = true
-    result := w.crawl(urlStr, includeHTML, userAgent, includeCategories)
+    result := w.crawl(urlStr, includeHTML, userAgent, proxy, includeCategories)
     w.results = append(w.results, result)
 
     *rows = append(*rows, []string{"URL", "TITLE", "TOTAL LINKS"})
@@ -147,17 +145,22 @@ func (w *WebSpider) recursiveCrawl(
 
     for _, link := range result.Links {
         if isAllowed(link, allowedDomains) {
-            w.recursiveCrawl(ctx, link, includeHTML, currentDepth+1, maxDepth, userAgent, allowedDomains, includeCategories, rows)
+            w.recursiveCrawl(ctx, link, includeHTML, currentDepth+1, maxDepth, userAgent, allowedDomains, includeCategories, proxy, rows)
         }
     }
 }
 
-func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string, includeCategories bool) CrawlResult {
+func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string, proxy string, includeCategories bool) CrawlResult {
     if !isResolvable(urlStr) {
         return CrawlResult{URL: urlStr, Title: "Unresolvable host", Links: []string{}}
     }
 
-    u := launcher.New().Headless(true).Leakless(false).Set("user-agent", userAgent).MustLaunch()
+    l := launcher.New().Headless(true).Leakless(false).Set("user-agent", userAgent).Set("ignore-certificate-errors", "true")
+    if proxy != "" {
+        l = l.Set("proxy-server", proxy)
+    }
+    u := l.MustLaunch()
+
     browser := rod.New().ControlURL(u).MustConnect()
     defer browser.MustClose()
 
@@ -170,7 +173,15 @@ func (w *WebSpider) crawl(urlStr string, includeHTML bool, userAgent string, inc
         return CrawlResult{URL: urlStr, Title: "Navigation failed: " + err.Error(), Links: []string{}}
     }
 
-    page.MustWaitLoad()
+    err = rod.Try(func() { page.MustWaitLoad() })
+    if err != nil {
+        return CrawlResult{
+            URL:   urlStr,
+            Title: "Page load failed: " + err.Error(),
+            Links: []string{},
+        }
+    }
+
     title := page.MustEval(`() => document.title`).String()
     baseURL, _ := url.Parse(page.MustInfo().URL)
 
@@ -305,6 +316,10 @@ func (w *WebSpider) Set(n string, v string) []string {
         case "INCLUDE_CATEGORIES":
             opt.Set((v == "true"))
             return []string{n, v}
+        default:
+        		opt.Set(v)
+        		return []string{opt.Name, fmt.Sprint(v)}
+
         }
     }
     return []string{"Error", "Option not found"}
