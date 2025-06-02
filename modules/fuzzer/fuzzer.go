@@ -466,12 +466,24 @@ func (m *FfufWrapper) Set(name, val string) []string {
 	// Handle different option types
 	switch opt.Name {
 	case "MATCHER_SIZE", "MATCHER_LINES", "MATCHER_WORDS",
-		"FILTER_SIZE", "FILTER_LINES", "FILTER_WORDS":
+		"FILTER_SIZE", "FILTER_LINES", "FILTER_WORDS", "THREADS", "TIMEOUT", "MAX_TIME", "MAX_TIME_JOB", "INPUT_NUM" :
 		if intVal, err := strconv.Atoi(val); err == nil {
 			opt.Set(intVal)
 			return []string{opt.Name, fmt.Sprint(intVal)}
 		}
 		return []string{opt.Name, "Invalid integer value"}
+
+	case "IGNORE_BODY", "FOLLOW_REDIRECTS", "RECURSIVE", "AUTO_CALIBRATE","SILENT",
+	     "STOP_ALL", "STOP_ERRORS", "STOP_FORBIDDEN", "VERBOSE", "DIRSEARCH_MODE", "IGNORE_COMMENTS":
+		if val == "true"{
+		    opt.Set(true)
+				return  []string{opt.Name, "true"}
+		} else {
+     		opt.Set(false)
+				return []string{opt.Name, "false"}
+    }
+    return []string{opt.Name, fmt.Sprintf("Invalid value %s",val)}
+
 	default:
 		opt.Set(val)
 		return []string{opt.Name, fmt.Sprint(val)}
@@ -493,7 +505,7 @@ func tableResults(fresults []ffuf.Result) [][]string {
 
 	for _, res := range fresults {
 		var result []string
-    result = append(result,fmt.Sprintf("Url: %s", res.Url))
+                result = append(result,fmt.Sprintf("Url: %s", res.Url))
 		result = append(result,fmt.Sprintf("Status: %d", res.StatusCode))
 		result = append(result,fmt.Sprintf("Size: %d", res.ContentLength))
 		result = append(result,fmt.Sprintf("Words: %d", res.ContentWords))
@@ -509,7 +521,7 @@ func tableResults(fresults []ffuf.Result) [][]string {
 
 		// Add result file path if exists
 		if res.ResultFile != "" {
-      results = append(results,[]string{"",fmt.Sprintf("RES --> %s",res.ResultFile),"","","","",""})
+                    results = append(results,[]string{"",fmt.Sprintf("RES --> %s",res.ResultFile),"","","","",""})
 		}
 
 		// Add scraper data if exists
