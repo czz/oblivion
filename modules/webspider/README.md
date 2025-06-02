@@ -21,6 +21,8 @@ A Go module for crawling web pages with JavaScript support via a headless browse
 | `USER_AGENT`       | `Mozilla/...Chrome/91.0.4472.124 Safari/537.36`                                                     |          | Custom User-Agent string                         |
 | `ALLOWED_DOMAINS`  | `[]`                                                                                                |          | Domains to restrict recursion                    |
 | `INCLUDE_CATEGORIES` | `true`                                                                                            |          | Categorize links by type (scripts, images, media)|
+| `HTTP_PROXY` |                                                                                             |          | HTTP proxy to use (e.g. http://127.0.0.1:8080)|
+
 
 ## Output
 
