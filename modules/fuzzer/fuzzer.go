@@ -49,7 +49,8 @@ func NewFuzzer() *FfufWrapper {
 	om.Register(option.NewOption("RECURSIVE", false, false, "Enable recursion"))
 	om.Register(option.NewOption("RECURSION_DEPTH", 0, false, "Max recursion depth"))
 	om.Register(option.NewOption("TIMEOUT", 10, false, "HTTP timeout in seconds"))
-	om.Register(option.NewOption("PROXY", "", false, "Proxy URL (http/socks5)"))
+	om.Register(option.NewOption("PROXY", "", false, "HTTP Proxy URL"))
+	om.Register(option.NewOption("REPLAY_PROXY", "", false, "Replay matched requests using this proxy"))
 
 	// Register general options
 	om.Register(option.NewOption("THREADS", 40, false, "Number of concurrent threads"))
@@ -104,7 +105,9 @@ func NewFuzzer() *FfufWrapper {
 		{"RECURSIVE", "false", "Enable recursion"},
 		{"RECURSION_DEPTH", "0", "Max recursion depth"},
 		{"TIMEOUT", "10", "HTTP timeout in seconds"},
-		{"PROXY", "", "Proxy URL (http/socks5)"},
+		{"PROXY", "", "HTTP Proxy URL"},
+		{"REPLAY_PROXY", "", "Replay matched requests using this proxy"},
+
 
 		// General Options
 		{"THREADS", "40", "Number of concurrent threads"},
@@ -136,7 +139,7 @@ func NewFuzzer() *FfufWrapper {
 		// Input Options
 		{"WORDLIST", "", "Path to wordlist"},
 		{"EXTENSIONS", "", "Comma-separated list of extensions"},
-		{"DIRSEARCH_MODE", "false", "DirSearch compatibility mode"},
+		{"DIRSEARCH_MODE", "false", "DirSearch compatibility mode, use with EXTENSIONS"},
 		{"IGNORE_COMMENTS", "false", "Ignore wordlist comments"},
 		{"INPUT_CMD", "", "Command producing the input"},
 		{"INPUT_NUM", "100", "Number of inputs for input-cmd"},
@@ -203,6 +206,7 @@ func ConfigFromOptionManager(om *option.OptionManager) *ffuf.ConfigOptions {
 		conf.HTTP.Timeout = opt.Value.(int)
 	}
 	conf.HTTP.ProxyURL = getString("PROXY")
+	conf.HTTP.ReplayProxyURL = getString("REPLAY_PROXY")
 
 	// General Configuration
 	if opt, ok := om.Get("THREADS"); ok {
@@ -478,7 +482,7 @@ func (m *FfufWrapper) Set(name, val string) []string {
 		if val == "true"{
 		    opt.Set(true)
 				return  []string{opt.Name, "true"}
-		} else {
+		} else if val == "false" {
      		opt.Set(false)
 				return []string{opt.Name, "false"}
     }
@@ -505,7 +509,7 @@ func tableResults(fresults []ffuf.Result) [][]string {
 
 	for _, res := range fresults {
 		var result []string
-                result = append(result,fmt.Sprintf("Url: %s", res.Url))
+    result = append(result,fmt.Sprintf("Url: %s", res.Url))
 		result = append(result,fmt.Sprintf("Status: %d", res.StatusCode))
 		result = append(result,fmt.Sprintf("Size: %d", res.ContentLength))
 		result = append(result,fmt.Sprintf("Words: %d", res.ContentWords))
@@ -516,19 +520,19 @@ func tableResults(fresults []ffuf.Result) [][]string {
 
 		// Add redirect location if exists
 		if res.RedirectLocation != "" {
-			results = append(results,[]string{"",fmt.Sprintf("Redirecting to --> %s",res.RedirectLocation),"","","","",""})
+			results = append(results,[]string{"",fmt.Sprintf("Redirecting to --> %s",res.RedirectLocation),"","","",""})
 		}
 
 		// Add result file path if exists
 		if res.ResultFile != "" {
-                    results = append(results,[]string{"",fmt.Sprintf("RES --> %s",res.ResultFile),"","","","",""})
+      results = append(results,[]string{"",fmt.Sprintf("RES --> %s",res.ResultFile),"","","",""})
 		}
 
 		// Add scraper data if exists
 		if len(res.ScraperData) > 0 {
 			for k, vslice := range res.ScraperData {
 				for _, v := range vslice {
-					results = append(results,[]string{"",fmt.Sprintf("SCR",res.RedirectLocation),fmt.Sprintf("%s",k),fmt.Sprintf("%s",v),"","",""})
+					results = append(results,[]string{"",fmt.Sprintf("SCR",res.RedirectLocation),fmt.Sprintf("%s",k),fmt.Sprintf("%s",v),"",""})
 				}
 			}
 		}
