@@ -160,17 +160,29 @@ func (s *SubdomainsSearch) uniqueSortedList(elements []string) []string {
 	return unique
 }
 
+func filterByDomain(subdomains []string, domain string) []string {
+	var filtered []string
+	for _, sub := range subdomains {
+		if strings.HasSuffix(sub, "."+domain) || sub == domain {
+			filtered = append(filtered, sub)
+		}
+	}
+	return filtered
+}
+
 // NewSubdomainsSearch initializes a SubdomainsSearch instance with default options
 func NewSubdomainsSearch() *SubdomainsSearch {
 	om := option.NewOptionManager()
 
 	om.Register(option.NewOption("SOURCES_URI", defaultSources, true, "Sources to retrieve subdomains (all free sources)"))
 	om.Register(option.NewOption("DOMAIN", "", true, "Domain to search subdomains"))
+  om.Register(option.NewOption("FILTER_BY_DOMAIN", false, false, "Filter subdomains to match only the base domain"))
 
 	helpManager := help.NewHelpManager()
 	helpManager.Register("subdomains_search", "Subdomains search module", [][]string{
 		{"SOURCES_URI", "not changable", "Uri from where to fetch subdomains about a domain"},
 		{"DOMAIN", "example.com", "The domain to search for subdomains"},
+		{"FILTER_BY_DOMAIN", "false", "Filter subdomains to match only the base domain"},
 	})
 
 	return &SubdomainsSearch{
@@ -255,7 +267,15 @@ func (s *SubdomainsSearch) Run(ctx context.Context) [][]string {
         }
     }
 
+
+
 EMIT:
+
+    if fopt, _ := s.optionManager.Get("FILTER_BY_DOMAIN"); fopt.Value != nil {
+		    if fopt.Value.(bool) {
+				    allSubdomains = filterByDomain(allSubdomains, domain)
+		    }
+    }
     // Unisco, filtro i duplicati e ordino
     s.results = s.uniqueSortedList(allSubdomains)
 
@@ -295,9 +315,22 @@ func (s *SubdomainsSearch) Set(n string, v string) []string {
 	om := *s.optionManager
 	m, ok := om.Get(n)
 	if ok {
-	    m.Set(v)
-	    return []string{m.Name, m.Value.(string)}
-  }
+		if n == "FILTER_BY_DOMAIN" {
+			switch strings.ToLower(v) {
+			case "true":
+				m.Set(true)
+				return []string{m.Name, "true"}
+			case "false":
+				m.Set(false)
+				return []string{m.Name, "false"}
+			default:
+				return []string{m.Name, "Value must be 'true' or 'false'"}
+			}
+		}
+
+		m.Set(v)
+		return []string{m.Name, fmt.Sprintf("%v", m.Value)}
+	}
 	return []string{"Error", "Option not found"}
 }
 
