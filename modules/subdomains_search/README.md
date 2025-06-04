@@ -22,3 +22,4 @@ A lightweight Oblivion Go module for discovering subdomains of a given domain by
 | ------------- | ------------------------------ | -------- | ------------------------------------- |
 | `SOURCES_URI` | Preconfigured list (immutable) | ✓        | API endpoints to query for subdomains |
 | `DOMAIN`      | (empty)                        | ✓        | Domain to search for subdomains       |
+| `FILTER_BY_DOMAIN`      | false                    |          | Filter subdomains to match only the base domain       |
